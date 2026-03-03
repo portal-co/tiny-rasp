@@ -1,0 +1,21 @@
+[package]
+name        = "check-ai-key"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CI binary: verify AI submission key in changed files and run RASP exploitation scanner"
+
+[[bin]]
+name = "check-ai-key"
+path = "src/main.rs"
+
+[dependencies]
+env-traits = { workspace = true }
+env-real   = { workspace = true }
+aiscan     = { workspace = true }
+keyguard   = { workspace = true }
+anyhow     = { workspace = true }
+
+[dev-dependencies]
+env-fake = { workspace = true }

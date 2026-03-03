@@ -1,0 +1,15 @@
+[package]
+name        = "keyguard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "AI submission key management: read, resolve CI anchor commit, scan files for key presence"
+
+[dependencies]
+env-traits = { workspace = true }
+anyhow     = { workspace = true }
+regex      = { workspace = true }
+
+[dev-dependencies]
+env-fake = { workspace = true }
