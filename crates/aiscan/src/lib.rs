@@ -30,7 +30,35 @@ pub use rasp::RaspScanner;
 
 use anyhow::{anyhow, Result};
 use env_traits::{AiEnv, NetworkEnv};
-use std::path::Path;
+use std::fmt;
+
+// ── AiScanError ──────────────────────────────────────────────────────────────
+
+/// Opaque error type used by all `AiEnv` impls in this crate.
+#[derive(Debug)]
+pub struct AiScanError(anyhow::Error);
+
+impl fmt::Display for AiScanError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for AiScanError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.0.source()
+    }
+}
+
+impl embedded_io::Error for AiScanError {
+    fn kind(&self) -> embedded_io::ErrorKind {
+        embedded_io::ErrorKind::Other
+    }
+}
+
+fn scan_err(e: anyhow::Error) -> AiScanError {
+    AiScanError(e)
+}
 
 // ── NoopAiEnv ────────────────────────────────────────────────────────────────
 
@@ -38,8 +66,12 @@ use std::path::Path;
 #[derive(Default, Clone, Copy)]
 pub struct NoopAiEnv;
 
+impl embedded_io::ErrorType for NoopAiEnv {
+    type Error = AiScanError;
+}
+
 impl AiEnv for NoopAiEnv {
-    fn scan(&self, _path: &Path, _content: &[u8]) -> Result<(bool, f64)> {
+    fn scan(&self, _path: &str, _content: &[u8]) -> std::result::Result<(bool, f64), AiScanError> {
         Ok((false, 0.0))
     }
 }
@@ -84,7 +116,7 @@ impl AiEnvConfig {
 pub fn build_ai_env<N: NetworkEnv + 'static>(
     config: AiEnvConfig,
     network: N,
-) -> Result<Box<dyn AiEnv>> {
+) -> Result<Box<dyn AiEnv<Error = AiScanError>>> {
     match config.backend.as_str() {
         "none" => Ok(Box::new(NoopAiEnv)),
         "http" => {

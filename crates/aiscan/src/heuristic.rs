@@ -5,16 +5,18 @@
 //! Scoring weights and all phrase lists are kept identical to the Go
 //! implementation so that CI behaviour is unchanged.
 
-use std::path::Path;
-
-use anyhow::Result;
+use crate::AiScanError;
 use env_traits::AiEnv;
 
 #[derive(Default, Clone, Copy)]
 pub struct HeuristicAiEnv;
 
+impl embedded_io::ErrorType for HeuristicAiEnv {
+    type Error = AiScanError;
+}
+
 impl AiEnv for HeuristicAiEnv {
-    fn scan(&self, _path: &Path, content: &[u8]) -> Result<(bool, f64)> {
+    fn scan(&self, _path: &str, content: &[u8]) -> Result<(bool, f64), AiScanError> {
         let text = String::from_utf8_lossy(content);
         let score = score(&text);
         Ok((score >= 0.5, score))
@@ -184,7 +186,7 @@ mod tests {
 
     fn scan(text: &str) -> (bool, f64) {
         HeuristicAiEnv
-            .scan(std::path::Path::new("test.txt"), text.as_bytes())
+            .scan("test.txt", text.as_bytes())
             .unwrap()
     }
 

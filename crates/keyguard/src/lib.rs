@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use env_traits::{FileEnv, GitEnv};
+use env_traits::{ErrorType, FileEnv, GitEnv};
 use regex::Regex;
 
 /// Ordered list of candidate files that may contain the key.
@@ -20,13 +20,17 @@ const CANDIDATE_FILES: &[&str] = &["key.agents_.md", "AGENTS.md"];
 /// (or `AGENTS.md`) inside `repo_root`.
 ///
 /// Returns `Ok(None)` when neither file exists or neither contains a key.
-pub fn read_key<F: FileEnv>(file: &F, repo_root: &Path) -> Result<Option<String>> {
+pub fn read_key<F: FileEnv>(file: &F, repo_root: &Path) -> Result<Option<String>>
+where
+    F::Error: Send + Sync + 'static,
+{
     for name in CANDIDATE_FILES {
         let path = repo_root.join(name);
-        if !file.file_exists(&path) {
+        let path_str = path.to_string_lossy();
+        if !file.file_exists(&path_str) {
             continue;
         }
-        let data = file.read_file(&path)?;
+        let data = file.read_file(&path_str)?;
         if let Some(k) = extract_key(&data) {
             return Ok(Some(k));
         }
@@ -42,9 +46,13 @@ pub fn read_key_at_commit<G: GitEnv>(
     git: &G,
     repo_root: &Path,
     commit: &str,
-) -> Result<Option<String>> {
+) -> Result<Option<String>>
+where
+    G::Error: Send + Sync + 'static,
+{
+    let root_str = repo_root.to_string_lossy();
     for name in CANDIDATE_FILES {
-        match git.show_file(repo_root, commit, name) {
+        match git.show_file(&root_str, commit, name) {
             Err(_) => continue, // file absent in this commit
             Ok(data) => {
                 if let Some(k) = extract_key(&data) {
@@ -67,19 +75,22 @@ pub fn base_commit<F: FileEnv, G: GitEnv>(
     file: &F,
     git: &G,
     repo_root: &Path,
-) -> Result<Option<String>> {
+) -> Result<Option<String>>
+where
+    F::Error: Send + Sync + 'static,
+    G::Error: Send + Sync + 'static,
+{
+    let root_str = repo_root.to_string_lossy();
     let event = file.env_var("GITHUB_EVENT_NAME").unwrap_or_default();
     let base_ref = file.env_var("GITHUB_BASE_REF").unwrap_or_default();
 
     if event.trim() == "pull_request" && !base_ref.trim().is_empty() {
-        // Fetch the base ref so merge-base works on shallow clones.
-        let _ = git.fetch(repo_root, "origin", base_ref.trim());
-        let sha = git.merge_base(repo_root, base_ref.trim())?;
+        let _ = git.fetch(&root_str, "origin", base_ref.trim());
+        let sha = git.merge_base(&root_str, base_ref.trim())?;
         return Ok(Some(sha));
     }
 
-    // push (or local): use the immediate parent commit.
-    match git.rev_parse(repo_root, "HEAD^") {
+    match git.rev_parse(&root_str, "HEAD^") {
         Ok(sha) => Ok(Some(sha)),
         Err(_) => Ok(None), // orphan / initial commit
     }
@@ -90,8 +101,11 @@ pub fn changed_files<G: GitEnv>(
     git: &G,
     repo_root: &Path,
     base_sha: &str,
-) -> Result<Vec<String>> {
-    git.changed_files(repo_root, base_sha)
+) -> Result<Vec<String>>
+where
+    G::Error: Send + Sync + 'static,
+{
+    git.changed_files(&repo_root.to_string_lossy(), base_sha).map_err(anyhow::Error::from)
 }
 
 /// Return the paths (relative to `repo_root`) from `paths` that do **not**
@@ -101,14 +115,18 @@ pub fn scan_for_key<F: FileEnv>(
     repo_root: &Path,
     paths: &[String],
     key: &str,
-) -> Result<Vec<String>> {
+) -> Result<Vec<String>>
+where
+    F::Error: Send + Sync + 'static,
+{
     let mut missing = Vec::new();
     for rel in paths {
         let abs: PathBuf = repo_root.join(rel);
-        if !file.file_exists(&abs) {
+        let abs_str = abs.to_string_lossy();
+        if !file.file_exists(&abs_str) {
             continue; // deleted file — not a submission
         }
-        let data = file.read_file(&abs)?;
+        let data = file.read_file(&abs_str)?;
         if !data.windows(key.len()).any(|w| w == key.as_bytes()) {
             missing.push(rel.clone());
         }

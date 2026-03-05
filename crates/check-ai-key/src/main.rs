@@ -7,7 +7,7 @@
 //!   1 — one or more files failed the check (AI-content or RASP alert)
 //!   2 — unrecoverable error (bad environment, git failure, etc.)
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use aiscan::{Detection, RaspAlert, RaspScanner, Severity};
@@ -51,19 +51,24 @@ pub fn should_skip(path: &str, content: &[u8]) -> bool {
 }
 
 /// Core logic.  Returns the process exit code.
-pub fn run<F, G>(file: &F, git: &G, ai: &dyn AiEnv) -> ExitCode
+pub fn run<F, G, A>(file: &F, git: &G, ai: &A) -> ExitCode
 where
     F: FileEnv,
     G: GitEnv,
+    A: AiEnv + ?Sized,
+    F::Error: Send + Sync + 'static,
+    G::Error: Send + Sync + 'static,
+    A::Error: core::fmt::Display,
 {
     // 1. Resolve repo root.
-    let repo_root = match git.repo_root() {
+    let repo_root_str = match git.repo_root() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("check-ai-key: cannot determine repo root: {e}");
             return ExitCode::from(2);
         }
     };
+    let repo_root = Path::new(&repo_root_str);
 
     // 2. Resolve anchor commit.
     let anchor = match keyguard::base_commit(file, git, &repo_root) {
@@ -121,7 +126,7 @@ where
     let mut missing: Vec<String> = Vec::new();
     for rel in &files {
         let abs: PathBuf = repo_root.join(rel);
-        let content = match file.read_file(&abs) {
+        let content = match file.read_file(&abs.to_string_lossy()) {
             Ok(c) => c,
             Err(_) => continue,
         };
@@ -153,14 +158,14 @@ where
     } else {
         for rel in &missing {
             let abs: PathBuf = repo_root.join(rel);
-            let content = match file.read_file(&abs) {
+            let content = match file.read_file(&abs.to_string_lossy()) {
                 Ok(c) => c,
                 Err(_) => continue,
             };
             if should_skip(rel, &content) {
                 continue;
             }
-            match ai.scan(&abs, &content) {
+            match ai.scan(&abs.to_string_lossy(), &content) {
                 Err(e) => {
                     println!("check-ai-key:   warn  {rel}: scanner error: {e}");
                 }

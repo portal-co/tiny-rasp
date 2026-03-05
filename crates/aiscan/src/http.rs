@@ -4,11 +4,11 @@
 //! Request  (JSON): `{"path": "<path>", "content": "<utf-8 text>"}`
 //! Response (JSON): `{"likely_ai": <bool>, "confidence": <float 0-1>}`
 
-use std::path::Path;
-
-use anyhow::{Context, Result};
+use anyhow::anyhow;
 use env_traits::{AiEnv, NetworkEnv};
 use serde::{Deserialize, Serialize};
+
+use crate::{scan_err, AiScanError};
 
 #[derive(Serialize)]
 struct ScanRequest<'a> {
@@ -33,21 +33,28 @@ impl<N: NetworkEnv> HttpAiEnv<N> {
     }
 }
 
+impl<N: NetworkEnv> embedded_io::ErrorType for HttpAiEnv<N> {
+    type Error = AiScanError;
+}
+
 impl<N: NetworkEnv> AiEnv for HttpAiEnv<N> {
-    fn scan(&self, path: &Path, content: &[u8]) -> Result<(bool, f64)> {
+    fn scan(&self, path: &str, content: &[u8]) -> Result<(bool, f64), AiScanError> {
         let body = serde_json::to_vec(&ScanRequest {
-            path:    &path.display().to_string(),
+            path,
             content: &String::from_utf8_lossy(content),
         })
-        .context("aiscan/http: serialize request")?;
+        .map_err(|e| scan_err(anyhow!(e).context("aiscan/http: serialize request")))?;
 
         let resp_bytes = self
             .network
             .post_json(&self.endpoint, &body)
-            .with_context(|| format!("aiscan/http: POST {}", self.endpoint))?;
+            .map_err(|e| {
+                let msg = format!("aiscan/http: POST {}: {e}", self.endpoint);
+                scan_err(anyhow!(msg))
+            })?;
 
-        let resp: ScanResponse =
-            serde_json::from_slice(&resp_bytes).context("aiscan/http: deserialize response")?;
+        let resp: ScanResponse = serde_json::from_slice(&resp_bytes)
+            .map_err(|e| scan_err(anyhow!(e).context("aiscan/http: deserialize response")))?;
 
         Ok((resp.likely_ai, resp.confidence))
     }
@@ -66,7 +73,7 @@ mod tests {
         let net = FakeNetworkEnv::default().with_response("http://ai.test/scan", body.as_ref());
         let scanner = HttpAiEnv::new("http://ai.test/scan", net);
         let (likely, conf) = scanner
-            .scan(Path::new("foo.rs"), b"some content")
+            .scan("foo.rs", b"some content")
             .unwrap();
         assert!(likely);
         assert!((conf - 0.87).abs() < 1e-9);
@@ -76,6 +83,6 @@ mod tests {
     fn propagates_network_error() {
         let net = FakeNetworkEnv::default(); // no response registered → Err
         let scanner = HttpAiEnv::new("http://ai.test/scan", net);
-        assert!(scanner.scan(Path::new("foo.rs"), b"x").is_err());
+        assert!(scanner.scan("foo.rs", b"x").is_err());
     }
 }
